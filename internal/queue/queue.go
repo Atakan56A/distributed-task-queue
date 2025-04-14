@@ -33,18 +33,8 @@ func (q *Queue) Dequeue() *Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	if len(q.tasks) == 0 {
-
-		timer := time.NewTimer(100 * time.Millisecond)
-		defer timer.Stop()
-
-		q.mu.Unlock()
-		<-timer.C
-		q.mu.Lock()
-
-		if len(q.tasks) == 0 {
-			return nil
-		}
+	for len(q.tasks) == 0 {
+		q.cond.Wait() // Pasif bekleme
 	}
 
 	task := q.tasks[0]

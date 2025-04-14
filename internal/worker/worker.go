@@ -27,6 +27,7 @@ func (w *Worker) Start(ctx context.Context) {
 		for {
 			select {
 			case task := <-w.TaskChannel:
+				log.Printf("Worker processTask")
 				w.processTask(task)
 			case <-w.Quit:
 				log.Printf("Worker %d stopping\n", w.ID)
@@ -40,17 +41,27 @@ func (w *Worker) Start(ctx context.Context) {
 }
 
 func (w *Worker) processTask(task *queue.Task) {
-	log.Printf("Worker %d processing task: %v\n", w.ID, task.ID)
+	log.Printf("Worker %d started processing task: %v\n", w.ID, task.ID)
 
 	task.Status = "processing"
 	task.StartedAt = time.Now()
 
-	time.Sleep(2 * time.Second)
+	success := processTaskLogic(task)
 
-	task.Status = "completed"
+	if !success {
+		log.Printf("Worker %d encountered an issue with task: %v\n", w.ID, task.ID)
+		task.Status = "failed"
+	} else {
+		log.Printf("Worker %d successfully completed task: %v\n", w.ID, task.ID)
+		task.Status = "completed"
+	}
+
 	task.CompletedAt = time.Now()
+}
 
-	log.Printf("Worker %d finished task: %v\n", w.ID, task.ID)
+func processTaskLogic(_ *queue.Task) bool {
+	time.Sleep(2 * time.Second)
+	return true
 }
 
 func (w *Worker) Stop() {

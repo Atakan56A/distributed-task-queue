@@ -64,8 +64,7 @@ func main() {
 			default:
 				if task := taskQueue.Dequeue(); task != nil {
 					taskChannel <- task
-				} else {
-					time.Sleep(100 * time.Millisecond)
+					log.Infof("Task dequeued: ID=%s, Status=%s", task.ID, task.Status)
 				}
 			}
 		}
