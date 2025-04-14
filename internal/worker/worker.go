@@ -14,10 +14,10 @@ type Worker struct {
 	Quit        chan bool
 }
 
-func NewWorker(id int) *Worker {
+func NewWorker(id int, taskChannel chan *queue.Task) *Worker {
 	return &Worker{
 		ID:          id,
-		TaskChannel: make(chan *queue.Task),
+		TaskChannel: taskChannel, // Artık kendi oluşturmak yerine dışarıdan alıyor
 		Quit:        make(chan bool),
 	}
 }

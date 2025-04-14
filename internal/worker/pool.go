@@ -22,7 +22,7 @@ func NewWorkerPool(numWorkers int, taskQueue chan *queue.Task) *WorkerPool {
 	ctx := context.Background()
 
 	for i := 0; i < numWorkers; i++ {
-		worker := NewWorker(i)
+		worker := NewWorker(i, taskQueue)
 		pool.workers[i] = worker
 		pool.wg.Add(1)
 		go func(w *Worker) {
