@@ -1,26 +1,47 @@
 package logger
 
 import (
-	"log"
 	"os"
+
+	"github.com/sirupsen/logrus"
 )
 
 type Logger struct {
-	*log.Logger
+	*logrus.Logger
 }
 
-func NewLogger() *Logger {
-	return &Logger{
-		Logger: log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile),
+func NewLogger(logLevel string) *Logger {
+	logger := logrus.New()
+	logger.Out = os.Stdout
+
+	// Set log level
+	level, err := logrus.ParseLevel(logLevel)
+	if err != nil {
+		logger.Warnf("Invalid log level: %s. Defaulting to info.", logLevel)
+		level = logrus.InfoLevel
 	}
+	logger.SetLevel(level)
+
+	// Set log format
+	logger.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
+
+	return &Logger{Logger: logger}
 }
 
 func (l *Logger) Info(message string) {
-	l.Println(message)
+	l.Logger.Info(message)
 }
 
 func (l *Logger) Error(message string) {
-	l.SetPrefix("ERROR: ")
-	l.Println(message)
-	l.SetPrefix("INFO: ")
+	l.Logger.Error(message)
+}
+
+func (l *Logger) Debug(message string) {
+	l.Logger.Debug(message)
+}
+
+func (l *Logger) Warn(message string) {
+	l.Logger.Warn(message)
 }

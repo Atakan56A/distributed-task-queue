@@ -1,6 +1,6 @@
 {
   "queue_size": 100,
-  "log_level": "Info",
+  "log_level": "info",
   "retry_count": 3,
   "worker_count": 5,
   "api_port": 8080

@@ -2,25 +2,24 @@ package main
 
 import (
 	"context"
-	"log"
+	"distributed-task-queue/api"
+	"distributed-task-queue/config"
+	"distributed-task-queue/internal/queue"
+	"distributed-task-queue/internal/worker"
+	"distributed-task-queue/pkg/logger"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
-
-	"distributed-task-queue/api"
-	"distributed-task-queue/config"
-	"distributed-task-queue/internal/queue"
-	"distributed-task-queue/internal/worker"
 )
 
 func main() {
-	// Load configuration
 	cfg, err := config.LoadConfig("config.json")
 	if err != nil {
-		log.Printf("Error loading configuration: %v, using defaults", err)
+		log := logger.NewLogger("warn")
+		log.Warnf("Error loading configuration: %v, using defaults", err)
 		cfg = &config.Config{
 			QueueSize:   100,
 			LogLevel:    "info",
@@ -30,35 +29,30 @@ func main() {
 		}
 	}
 
-	// Initialize the task queue
+	log := logger.NewLogger(cfg.LogLevel)
+
 	taskQueue := queue.NewQueue()
 
-	// Create a channel for workers
 	taskChannel := make(chan *queue.Task, cfg.QueueSize)
 
-	// Start worker pool
 	workerPool := worker.NewWorkerPool(cfg.WorkerCount, taskChannel)
 
-	// Setup API handlers
-	taskHandler := api.NewTaskHandler(taskQueue)
+	taskHandler := api.NewTaskHandler(taskQueue, log)
 	router := api.NewRouter(taskHandler)
 
-	// Start HTTP server
 	port := strconv.Itoa(cfg.APIPort)
 	server := &http.Server{
 		Addr:    ":" + port,
 		Handler: router,
 	}
 
-	// Start server in a goroutine
 	go func() {
-		log.Printf("HTTP server listening on port %s", port)
+		log.Infof("HTTP serverss listening on port %s", port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server error: %v", err)
 		}
 	}()
 
-	// Start handling tasks in a separate goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -71,32 +65,28 @@ func main() {
 				if task := taskQueue.Dequeue(); task != nil {
 					taskChannel <- task
 				} else {
-					// Kısa bir süre bekleyelim CPU kullanımını azaltmak için
 					time.Sleep(100 * time.Millisecond)
 				}
 			}
 		}
 	}()
 
-	log.Println("Task Queue Service started successfully")
+	log.Info("Task Queue Service started successfully")
 
-	// Graceful shutdown için sinyal bekle
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
-	cancel() // Worker goroutine'leri iptal et
+	log.Info("Shutting down server...")
+	cancel()
 
-	// Sunucuyu kapat
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	// Worker pool'u durdur
 	workerPool.Stop()
 
-	log.Println("Server stopped")
+	log.Info("Server stopped")
 }
