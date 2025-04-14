@@ -1,6 +1,5 @@
 ﻿# Executable
 taskqueueservice.exe
-taskqueueservice
 
 # Go specific
 *.exe
