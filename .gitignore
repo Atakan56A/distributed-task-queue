@@ -1,0 +1,20 @@
+﻿# Executable
+taskqueueservice.exe
+taskqueueservice
+
+# Go specific
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Log files
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db
