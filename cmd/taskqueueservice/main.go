@@ -4,6 +4,7 @@ import (
 	"context"
 	"distributed-task-queue/api"
 	"distributed-task-queue/config"
+	"distributed-task-queue/internal/metrics"
 	"distributed-task-queue/internal/queue"
 	"distributed-task-queue/internal/scheduler"
 	"distributed-task-queue/internal/worker"
@@ -32,16 +33,18 @@ func main() {
 
 	log := logger.NewLogger(cfg.LogLevel)
 
+	metricsCollector := metrics.NewMetrics()
+
 	taskQueue := queue.NewQueue()
 
 	taskChannel := make(chan *queue.Task, cfg.QueueSize)
 
-	workerPool := worker.NewWorkerPool(cfg.WorkerCount, taskChannel)
+	workerPool := worker.NewWorkerPool(cfg.WorkerCount, taskChannel, metricsCollector)
 
 	taskScheduler := scheduler.NewScheduler(taskQueue, taskChannel, log)
 	go taskScheduler.Start()
 
-	taskHandler := api.NewTaskHandler(taskQueue, log)
+	taskHandler := api.NewTaskHandler(taskQueue, log, metricsCollector)
 	router := api.NewRouter(taskHandler)
 
 	port := strconv.Itoa(cfg.APIPort)
@@ -70,6 +73,22 @@ func main() {
 					taskChannel <- task
 					log.Infof("Task dequeued: ID=%s, Status=%s", task.ID, task.Status)
 				}
+			}
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(60 * time.Second) // Her dakika
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				stats := metricsCollector.GetSummaryStats()
+				log.Infof("System metrics: Tasks=%d, Success=%d, Failed=%d, AvgTime=%v",
+					stats["totalTasks"], stats["successfulTasks"], stats["failedTasks"], stats["avgProcessingTime"])
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()

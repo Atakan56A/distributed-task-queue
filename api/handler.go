@@ -1,6 +1,7 @@
 package api
 
 import (
+	"distributed-task-queue/internal/metrics"
 	"distributed-task-queue/internal/queue"
 	"distributed-task-queue/pkg/logger"
 	"encoding/json"
@@ -14,10 +15,15 @@ import (
 type TaskHandler struct {
 	TaskQueue *queue.Queue
 	Logger    *logger.Logger
+	Metrics   *metrics.Metrics
 }
 
-func NewTaskHandler(taskQueue *queue.Queue, log *logger.Logger) *TaskHandler {
-	return &TaskHandler{TaskQueue: taskQueue, Logger: log}
+func NewTaskHandler(taskQueue *queue.Queue, log *logger.Logger, metrics *metrics.Metrics) *TaskHandler {
+	return &TaskHandler{
+		TaskQueue: taskQueue,
+		Logger:    log,
+		Metrics:   metrics,
+	}
 }
 
 func (h *TaskHandler) AddTask(w http.ResponseWriter, r *http.Request) {
@@ -74,4 +80,12 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	h.Logger.Infof("Task list requested with filter: %s", statusFilter)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tasks)
+}
+
+func (h *TaskHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
+	stats := h.Metrics.GetSummaryStats()
+
+	h.Logger.Info("Metrics requested")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
 }

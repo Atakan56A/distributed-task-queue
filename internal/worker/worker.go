@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"distributed-task-queue/internal/metrics"
 	"distributed-task-queue/internal/queue"
 	"distributed-task-queue/internal/retry"
 )
@@ -13,13 +14,15 @@ type Worker struct {
 	ID          int
 	TaskChannel chan *queue.Task
 	Quit        chan bool
+	Metrics     *metrics.Metrics
 }
 
-func NewWorker(id int, taskChannel chan *queue.Task) *Worker {
+func NewWorker(id int, taskChannel chan *queue.Task, metrics *metrics.Metrics) *Worker {
 	return &Worker{
 		ID:          id,
 		TaskChannel: taskChannel,
 		Quit:        make(chan bool),
+		Metrics:     metrics,
 	}
 }
 
@@ -46,6 +49,7 @@ func (w *Worker) processTask(task *queue.Task) {
 
 	task.Status = "processing"
 	task.StartedAt = time.Now()
+	startTime := time.Now()
 
 	maxRetries := task.MaxRetries
 	if maxRetries <= 0 {
@@ -78,8 +82,6 @@ func (w *Worker) processTask(task *queue.Task) {
 		case taskSuccess := <-done:
 			if taskSuccess {
 				success = true
-				cancel()
-				break
 			}
 		case <-ctx.Done():
 			log.Printf("Worker %d task attempt timed out: %v\n", w.ID, task.ID)
@@ -98,12 +100,20 @@ func (w *Worker) processTask(task *queue.Task) {
 		}
 	}
 
+	duration := time.Since(startTime)
+
 	if success {
 		log.Printf("Worker %d successfully completed task: %v\n", w.ID, task.ID)
 		task.Status = "completed"
+		if w.Metrics != nil {
+			w.Metrics.RecordTaskSuccess(duration)
+		}
 	} else {
 		log.Printf("Worker %d failed to complete task after %d attempts: %v\n", w.ID, task.RetryCount+1, task.ID)
 		task.Status = "failed"
+		if w.Metrics != nil {
+			w.Metrics.RecordTaskFailure(duration)
+		}
 	}
 
 	task.CompletedAt = time.Now()
