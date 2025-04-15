@@ -114,3 +114,16 @@ func (q *Queue) ListTasks(statusFilter string) ([]*Task, error) {
 
 	return result, nil
 }
+
+func (q *Queue) GetPendingTasks() []*Task {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	var pendingTasks []*Task
+	for _, task := range q.tasks {
+		if task.Status == "pending" {
+			pendingTasks = append(pendingTasks, task)
+		}
+	}
+	return pendingTasks
+}

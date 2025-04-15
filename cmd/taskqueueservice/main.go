@@ -5,6 +5,7 @@ import (
 	"distributed-task-queue/api"
 	"distributed-task-queue/config"
 	"distributed-task-queue/internal/queue"
+	"distributed-task-queue/internal/scheduler"
 	"distributed-task-queue/internal/worker"
 	"distributed-task-queue/pkg/logger"
 	"net/http"
@@ -36,6 +37,9 @@ func main() {
 	taskChannel := make(chan *queue.Task, cfg.QueueSize)
 
 	workerPool := worker.NewWorkerPool(cfg.WorkerCount, taskChannel)
+
+	taskScheduler := scheduler.NewScheduler(taskQueue, taskChannel, log)
+	go taskScheduler.Start()
 
 	taskHandler := api.NewTaskHandler(taskQueue, log)
 	router := api.NewRouter(taskHandler)
@@ -78,6 +82,8 @@ func main() {
 
 	log.Info("Shutting down server...")
 	cancel()
+
+	taskScheduler.Stop()
 
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
