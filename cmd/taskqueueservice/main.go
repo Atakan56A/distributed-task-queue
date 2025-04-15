@@ -55,7 +55,7 @@ func main() {
 
 	taskChannel := make(chan *queue.Task, cfg.QueueSize)
 
-	workerPool := worker.NewWorkerPool(cfg.WorkerCount, taskChannel, metricsCollector)
+	workerPool := worker.NewWorkerPool(cfg.WorkerCount, taskChannel, metricsCollector, taskQueue)
 
 	taskScheduler := scheduler.NewScheduler(taskQueue, taskChannel, log)
 	go taskScheduler.Start()

@@ -40,8 +40,6 @@ func (s *Scheduler) Start() {
 	}()
 }
 
-// checkScheduledTasks metodunu güncelleyin:
-
 func (s *Scheduler) checkScheduledTasks() {
 	now := time.Now()
 	tasks := s.taskQueue.GetPendingTasks()
@@ -50,19 +48,16 @@ func (s *Scheduler) checkScheduledTasks() {
 		if task.Status == "pending" && !task.ScheduledAt.After(now) {
 			s.logger.Infof("Scheduled task is ready to run: %s", task.ID)
 
-			// Tekrarlanan görev ise, bir sonraki çalıştırma için zamanla
 			if task.IsRecurring {
 				taskCopy := *task // Görevin bir kopyasını al
 
-				// Orijinal görevi güncelle
 				task.NextRun = now.Add(task.Interval)
 				task.ScheduledAt = task.NextRun
 				s.logger.Infof("Recurring task %s rescheduled for %v", task.ID, task.NextRun)
 
-				// Kopyayı işlensin diye gönder
 				s.taskChannel <- &taskCopy
 			} else {
-				// Tek seferlik görev
+
 				s.taskChannel <- task
 			}
 		}

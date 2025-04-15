@@ -8,11 +8,12 @@ import (
 )
 
 type Queue struct {
-	tasks          []*Task
-	completedTasks map[string]*Task
-	mu             sync.Mutex
-	cond           *sync.Cond
-	storage        Storage
+	tasks           []*Task
+	completedTasks  map[string]*Task
+	mu              sync.Mutex
+	cond            *sync.Cond
+	storage         Storage
+	deadLetterQueue *DeadLetterQueue
 }
 
 type Storage interface {
@@ -29,6 +30,9 @@ func NewQueue() *Queue {
 		completedTasks: make(map[string]*Task),
 	}
 	q.cond = sync.NewCond(&q.mu)
+
+	q.deadLetterQueue = NewDeadLetterQueue()
+
 	return q
 }
 
@@ -36,6 +40,30 @@ func (q *Queue) SetStorage(storage Storage) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.storage = storage
+
+	q.deadLetterQueue.SetStorage(storage)
+}
+
+func (q *Queue) GetDeadLetterQueue() *DeadLetterQueue {
+	return q.deadLetterQueue
+}
+
+func (q *Queue) MoveToDeadLetterQueue(taskID, reason string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	task, ok := q.completedTasks[taskID]
+	if !ok {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	if task.Status != TaskStatusFailed {
+		return fmt.Errorf("only failed tasks can be moved to dead letter queue")
+	}
+
+	q.deadLetterQueue.AddTask(task, reason)
+
+	return nil
 }
 
 func (q *Queue) RestoreTasks() error {
@@ -52,16 +80,81 @@ func (q *Queue) RestoreTasks() error {
 	}
 
 	for _, task := range tasks {
-		if task.Status == "pending" || task.Status == "scheduled" {
+		if task.Status == TaskStatusPending || task.Status == TaskStatusScheduled {
+
 			q.tasks = append(q.tasks, task)
+		} else if task.Status == TaskStatusDeadLettered {
+
+			q.deadLetterQueue.AddTask(task, "Restored from storage")
 		} else {
+
 			q.completedTasks[task.ID] = task
+
+			if task.Status == TaskStatusProcessing {
+
+				taskCopy := *task
+				taskCopy.RetryCount++ // Yeniden deneme sayısını artır
+				taskCopy.AddEvent(TaskStatusPending, "Task requeued after system restart", "Processing was interrupted")
+				q.tasks = append(q.tasks, &taskCopy)
+			}
 		}
 	}
 
-	fmt.Printf("Restored %d pending tasks and %d completed tasks\n",
+	fmt.Printf("Restored %d pending tasks, %d completed/failed tasks, and dead-lettered tasks\n",
 		len(q.tasks), len(q.completedTasks))
 	return nil
+}
+
+func (q *Queue) TaskFailed(id string, errorMessage string, moveToDeadLetter bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	task, ok := q.completedTasks[id]
+	if !ok {
+		return // Görev bulunamadı
+	}
+
+	task.SetFailed(errorMessage)
+
+	if q.storage != nil {
+		go func(t *Task) {
+			if err := q.storage.SaveTask(t); err != nil {
+				fmt.Printf("Error updating failed task in storage: %v\n", err)
+			}
+		}(task)
+	}
+
+	if moveToDeadLetter {
+		reason := fmt.Sprintf("Task failed after %d attempts. Last error: %s",
+			task.RetryCount, errorMessage)
+		q.deadLetterQueue.AddTask(task, reason)
+	}
+}
+
+func (q *Queue) GetTaskDetails(id string) (*Task, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if task, ok := q.completedTasks[id]; ok {
+		return task, nil
+	}
+
+	for _, task := range q.tasks {
+		if task.ID == id {
+			return task, nil
+		}
+	}
+
+	task, err := q.deadLetterQueue.GetTask(id)
+	if err == nil && task != nil {
+		return task, nil
+	}
+
+	if q.storage != nil {
+		return q.storage.GetTask(id)
+	}
+
+	return nil, errors.New("task not found")
 }
 
 func (q *Queue) Enqueue(task *Task) {
@@ -155,19 +248,19 @@ func (q *Queue) GetTaskStatus(id string) (string, error) {
 	defer q.mu.Unlock()
 
 	if task, ok := q.completedTasks[id]; ok {
-		return task.Status, nil
+		return string(task.Status), nil
 	}
 
 	for _, task := range q.tasks {
 		if task.ID == id {
-			return task.Status, nil
+			return string(task.Status), nil
 		}
 	}
 
 	if q.storage != nil {
 		task, err := q.storage.GetTask(id)
 		if err == nil && task != nil {
-			return task.Status, nil
+			return string(task.Status), nil
 		}
 	}
 
@@ -179,7 +272,7 @@ func (q *Queue) TaskCompleted(id string, status string) {
 	defer q.mu.Unlock()
 
 	if task, ok := q.completedTasks[id]; ok {
-		task.Status = status
+		task.Status = TaskStatus(status)
 		task.CompletedAt = time.Now()
 
 		if q.storage != nil {
@@ -200,14 +293,14 @@ func (q *Queue) ListTasks(statusFilter string) ([]*Task, error) {
 
 	if statusFilter == "" || statusFilter == "pending" || statusFilter == "scheduled" {
 		for _, task := range q.tasks {
-			if statusFilter == "" || task.Status == statusFilter {
+			if statusFilter == "" || string(task.Status) == statusFilter {
 				result = append(result, task)
 			}
 		}
 	}
 
 	for _, task := range q.completedTasks {
-		if statusFilter == "" || task.Status == statusFilter {
+		if statusFilter == "" || string(task.Status) == statusFilter {
 			result = append(result, task)
 		}
 	}

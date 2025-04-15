@@ -13,19 +13,21 @@ type WorkerPool struct {
 	taskQueue chan *queue.Task
 	wg        sync.WaitGroup
 	metrics   *metrics.Metrics
+	queue     *queue.Queue
 }
 
-func NewWorkerPool(numWorkers int, taskQueue chan *queue.Task, metrics *metrics.Metrics) *WorkerPool {
+func NewWorkerPool(numWorkers int, taskQueue chan *queue.Task, metrics *metrics.Metrics, queue *queue.Queue) *WorkerPool {
 	pool := &WorkerPool{
 		workers:   make([]*Worker, numWorkers),
 		taskQueue: taskQueue,
 		metrics:   metrics,
+		queue:     queue,
 	}
 
 	ctx := context.Background()
 
 	for i := 0; i < numWorkers; i++ {
-		worker := NewWorker(i, taskQueue, metrics)
+		worker := NewWorker(i, taskQueue, metrics, queue)
 		pool.workers[i] = worker
 		pool.wg.Add(1)
 		go func(w *Worker) {

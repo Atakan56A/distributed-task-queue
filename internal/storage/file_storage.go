@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// FileStorage implements Storage interface using JSON files
 type FileStorage struct {
 	baseDir   string
 	tasksFile string
@@ -20,7 +19,6 @@ type FileStorage struct {
 	saveTimer *time.Timer
 }
 
-// NewFileStorage creates a new file-based storage
 func NewFileStorage(directory string) (*FileStorage, error) {
 	if err := os.MkdirAll(directory, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create storage directory: %w", err)
@@ -32,12 +30,10 @@ func NewFileStorage(directory string) (*FileStorage, error) {
 		tasks:     make(map[string]*queue.Task),
 	}
 
-	// Try to load existing tasks
 	if err := fs.loadTasks(); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to load existing tasks: %w", err)
 	}
 
-	// Set up periodic saving (every 5 seconds)
 	fs.startAutoSave(5 * time.Second)
 
 	return fs, nil
@@ -55,7 +51,6 @@ func (fs *FileStorage) startAutoSave(interval time.Duration) {
 			}
 		}
 
-		// Reschedule the timer
 		fs.saveTimer.Reset(interval)
 	})
 }
@@ -74,7 +69,6 @@ func (fs *FileStorage) loadTasks() error {
 		return fmt.Errorf("failed to parse tasks file: %w", err)
 	}
 
-	// Rebuild the task map
 	fs.tasks = make(map[string]*queue.Task, len(tasks))
 	for _, task := range tasks {
 		fs.tasks[task.ID] = task
@@ -87,7 +81,6 @@ func (fs *FileStorage) saveTasks() error {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
-	// Convert map to slice for JSON storage
 	tasks := make([]*queue.Task, 0, len(fs.tasks))
 	for _, task := range fs.tasks {
 		tasks = append(tasks, task)
@@ -103,7 +96,6 @@ func (fs *FileStorage) saveTasks() error {
 		return fmt.Errorf("failed to write tasks file: %w", err)
 	}
 
-	// Atomically replace the old file with the new one
 	if err := os.Rename(tempFile, fs.tasksFile); err != nil {
 		return fmt.Errorf("failed to rename tasks file: %w", err)
 	}
@@ -155,7 +147,7 @@ func (fs *FileStorage) GetTasksByStatus(status string) ([]*queue.Task, error) {
 
 	var tasks []*queue.Task
 	for _, task := range fs.tasks {
-		if task.Status == status {
+		if string(task.Status) == status {
 			tasks = append(tasks, task)
 		}
 	}
@@ -170,11 +162,10 @@ func (fs *FileStorage) DeleteTask(taskID string) error {
 }
 
 func (fs *FileStorage) Close() error {
-	// Stop the auto-save timer
+
 	if fs.saveTimer != nil {
 		fs.saveTimer.Stop()
 	}
 
-	// Final save
 	return fs.saveTasks()
 }

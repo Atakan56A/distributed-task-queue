@@ -14,7 +14,6 @@ func NewLogger(logLevel string) *Logger {
 	logger := logrus.New()
 	logger.Out = os.Stdout
 
-	// Set log level
 	level, err := logrus.ParseLevel(logLevel)
 	if err != nil {
 		logger.Warnf("Invalid log level: %s. Defaulting to info.", logLevel)
@@ -22,7 +21,6 @@ func NewLogger(logLevel string) *Logger {
 	}
 	logger.SetLevel(level)
 
-	// Set log format
 	logger.SetFormatter(&logrus.TextFormatter{
 		FullTimestamp: true,
 	})
