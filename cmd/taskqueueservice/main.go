@@ -7,11 +7,13 @@ import (
 	"distributed-task-queue/internal/metrics"
 	"distributed-task-queue/internal/queue"
 	"distributed-task-queue/internal/scheduler"
+	"distributed-task-queue/internal/storage"
 	"distributed-task-queue/internal/worker"
 	"distributed-task-queue/pkg/logger"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -20,8 +22,6 @@ import (
 func main() {
 	cfg, err := config.LoadConfig("config.json")
 	if err != nil {
-		log := logger.NewLogger("warn")
-		log.Warnf("Error loading configuration: %v, using defaults", err)
 		cfg = &config.Config{
 			QueueSize:   100,
 			LogLevel:    "info",
@@ -32,10 +32,26 @@ func main() {
 	}
 
 	log := logger.NewLogger(cfg.LogLevel)
+	log.Info("Starting Task Queue Service")
 
 	metricsCollector := metrics.NewMetrics()
 
 	taskQueue := queue.NewQueue()
+
+	dataDir := filepath.Join(".", "data")
+	fileStorage, err := storage.NewFileStorage(dataDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize storage: %v", err)
+	}
+	defer fileStorage.Close()
+
+	taskQueue.SetStorage(fileStorage)
+
+	if err := taskQueue.RestoreTasks(); err != nil {
+		log.Warnf("Failed to restore tasks: %v", err)
+	} else {
+		log.Info("Successfully restored tasks from storage")
+	}
 
 	taskChannel := make(chan *queue.Task, cfg.QueueSize)
 
@@ -69,7 +85,8 @@ func main() {
 			case <-ctx.Done():
 				return
 			default:
-				if task := taskQueue.Dequeue(); task != nil {
+				task := taskQueue.Dequeue()
+				if task != nil {
 					taskChannel <- task
 					log.Infof("Task dequeued: ID=%s, Status=%s", task.ID, task.Status)
 				}
@@ -78,7 +95,7 @@ func main() {
 	}()
 
 	go func() {
-		ticker := time.NewTicker(60 * time.Second) // Her dakika
+		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -111,6 +128,11 @@ func main() {
 	}
 
 	workerPool.Stop()
+
+	log.Info("Saving all tasks before shutdown...")
+	if err := fileStorage.Close(); err != nil {
+		log.Errorf("Error saving tasks: %v", err)
+	}
 
 	log.Info("Server stopped")
 }
