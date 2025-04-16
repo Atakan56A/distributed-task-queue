@@ -4,6 +4,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type Metrics struct {
@@ -16,13 +18,62 @@ type Metrics struct {
 	totalProcessingTime     time.Duration
 	minProcessingTime       time.Duration
 	maxProcessingTime       time.Duration
+	TaskDistributions       prometheus.Counter
+	TaskDistributionSkipped prometheus.Counter
+	TaskCompletions         prometheus.Counter
+	RedisConnectionErrors   prometheus.Counter
+	RedisReconnectAttempts  prometheus.Counter
+	RedisReconnectSuccess   prometheus.Counter
 }
 
 func NewMetrics() *Metrics {
+	taskDistributions := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "task_queue_distributions_total",
+		Help: "Total number of task distributions",
+	})
+
+	taskDistributionSkipped := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "task_queue_distributions_skipped_total",
+		Help: "Total number of task distributions skipped",
+	})
+
+	taskCompletions := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "task_queue_completions_total",
+		Help: "Total number of task completions",
+	})
+
+	redisConnectionErrors := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "task_queue_redis_connection_errors_total",
+		Help: "Total number of Redis connection errors",
+	})
+
+	redisReconnectAttempts := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "task_queue_redis_reconnect_attempts_total",
+		Help: "Total number of Redis reconnect attempts",
+	})
+
+	redisReconnectSuccess := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "task_queue_redis_reconnect_success_total",
+		Help: "Total number of successful Redis reconnections",
+	})
+
+	prometheus.MustRegister(taskDistributions)
+	prometheus.MustRegister(taskDistributionSkipped)
+	prometheus.MustRegister(taskCompletions)
+	prometheus.MustRegister(redisConnectionErrors)
+	prometheus.MustRegister(redisReconnectAttempts)
+	prometheus.MustRegister(redisReconnectSuccess)
+
 	return &Metrics{
 		taskProcessingDurations: make([]time.Duration, 0),
 		maxStoredDurations:      1000,
 		minProcessingTime:       time.Duration(1<<63 - 1),
+		TaskDistributions:       taskDistributions,
+		TaskDistributionSkipped: taskDistributionSkipped,
+		TaskCompletions:         taskCompletions,
+		RedisConnectionErrors:   redisConnectionErrors,
+		RedisReconnectAttempts:  redisReconnectAttempts,
+		RedisReconnectSuccess:   redisReconnectSuccess,
 	}
 }
 

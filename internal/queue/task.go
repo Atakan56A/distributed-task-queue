@@ -123,10 +123,14 @@ func (t *Task) SetFailed(errorMessage string) {
 	t.AddEvent(TaskStatusFailed, "Task execution failed", errorMessage)
 }
 
-func (t *Task) SetCompleted(message string) {
+func (t *Task) SetCompleted(message string, storage Storage) {
 	t.Status = TaskStatusCompleted
 	t.CompletedAt = time.Now()
 	t.AddEvent(TaskStatusCompleted, message, "")
+
+	if storage != nil {
+		storage.MarkTaskCompleted(t.ID)
+	}
 }
 
 func (t *Task) SetProcessing() {

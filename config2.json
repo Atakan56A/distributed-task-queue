@@ -1,0 +1,14 @@
+{
+    "queueSize": 100,
+    "logLevel": "info",
+    "retryCount": 3,
+    "workerCount": 3,
+    "minWorkers": 2,
+    "maxWorkers": 5,
+    "apiPort": 8081,
+    "clusterEnabled": true,
+    "redisAddress": "localhost:6379",
+    "redisPassword": "",
+    "nodeAddress": "localhost:8081",
+    "cleanRedisOnStart" : true
+  }

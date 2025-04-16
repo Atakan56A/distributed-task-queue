@@ -28,6 +28,10 @@ type Storage interface {
 	GetAllTasks() ([]*Task, error)
 	GetTasksByStatus(status string) ([]*Task, error)
 	Close() error
+	IsTaskCompleted(taskID string) (bool, error)
+	MarkTaskCompleted(taskID string) error
+	AcquireTaskLock(taskID, nodeID string, timeout time.Duration) (bool, error)
+	ReleaseTaskLock(taskID, nodeID string) error
 }
 
 func NewQueue() *Queue {
@@ -48,6 +52,10 @@ func (q *Queue) SetStorage(storage Storage) {
 	q.storage = storage
 
 	q.deadLetterQueue.SetStorage(storage)
+}
+
+func (q *Queue) GetStorage() Storage {
+	return q.storage
 }
 
 func (q *Queue) GetDeadLetterQueue() *DeadLetterQueue {

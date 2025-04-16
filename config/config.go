@@ -21,6 +21,13 @@ type Config struct {
 	ScaleDownThreshold   float64       `json:"scaleDownThreshold"`
 	ScaleCheckInterval   int           `json:"scaleCheckInterval"`
 	DistributionStrategy string        `json:"distributionStrategy"`
+	ClusterEnabled       bool          `json:"clusterEnabled"`
+	RedisAddress         string        `json:"redisAddress"`
+	RedisPassword        string        `json:"redisPassword"`
+	NodeAddress          string        `json:"nodeAddress"`
+	HeartbeatInterval    int           `json:"heartbeatInterval"`
+	NodeFailureTimeout   int           `json:"nodeFailureTimeout"`
+	CleanRedisOnStart    bool          `json:"cleanRedisOnStart"`
 }
 
 func LoadConfig(filePath string) (*Config, error) {
@@ -45,6 +52,7 @@ func LoadConfig(filePath string) (*Config, error) {
 		ScaleDownThreshold:   0.3,
 		ScaleCheckInterval:   30,
 		DistributionStrategy: "least-loaded",
+		CleanRedisOnStart:    true,
 	}
 
 	decoder := json.NewDecoder(file)

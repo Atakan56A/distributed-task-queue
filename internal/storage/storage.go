@@ -2,6 +2,7 @@ package storage
 
 import (
 	"distributed-task-queue/internal/queue"
+	"time"
 )
 
 type Storage interface {
@@ -18,4 +19,9 @@ type Storage interface {
 	DeleteTask(taskID string) error
 
 	Close() error
+
+	IsTaskCompleted(taskID string) (bool, error)
+	MarkTaskCompleted(taskID string) error
+	AcquireTaskLock(taskID, nodeID string, timeout time.Duration) (bool, error)
+	ReleaseTaskLock(taskID, nodeID string) error
 }

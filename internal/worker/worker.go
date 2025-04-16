@@ -84,7 +84,27 @@ func (w *Worker) Start() {
 }
 
 func (w *Worker) processTask(task *queue.Task) {
-	log.Printf("Worker %d started processing task: %v\n", w.ID, task.ID)
+	log.Printf("Worker %d checking task: %v\n", w.ID, task.ID)
+
+	storage := w.TaskQueue.GetStorage()
+
+	locked, err := storage.AcquireTaskLock(task.ID, fmt.Sprintf("worker-%d", w.ID), 60*time.Second)
+	if err != nil {
+		log.Printf("Worker %d error locking task: %v\n", w.ID, err)
+	} else if !locked {
+		log.Printf("Worker %d could not lock task %s, skipping\n", w.ID, task.ID)
+		return
+	}
+
+	defer storage.ReleaseTaskLock(task.ID, fmt.Sprintf("worker-%d", w.ID))
+
+	isCompleted, err := storage.IsTaskCompleted(task.ID)
+	if err != nil {
+		log.Printf("Worker %d error checking task completion: %v\n", w.ID, err)
+	} else if isCompleted {
+		log.Printf("Worker %d skipping task %s - already completed\n", w.ID, task.ID)
+		return
+	}
 
 	task.SetProcessing()
 	startTime := time.Now()
@@ -155,7 +175,7 @@ func (w *Worker) processTask(task *queue.Task) {
 
 	if success {
 		log.Printf("Worker %d successfully completed task: %v\n", w.ID, task.ID)
-		task.SetCompleted("Task completed successfully")
+		task.SetCompleted("Task completed successfully", storage)
 		if w.Metrics != nil {
 			w.Metrics.RecordTaskSuccess(duration)
 		}
@@ -185,6 +205,12 @@ func (w *Worker) processTask(task *queue.Task) {
 
 		if w.Metrics != nil {
 			w.Metrics.RecordTaskFailure(duration)
+		}
+	}
+
+	if success {
+		if err := storage.MarkTaskCompleted(task.ID); err != nil {
+			log.Printf("Worker %d error marking task as completed: %v\n", w.ID, err)
 		}
 	}
 }

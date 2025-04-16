@@ -4,7 +4,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func NewRouter(taskHandler *TaskHandler) *mux.Router {
+func NewRouter(taskHandler *TaskHandler, clusterHandler *ClusterHandler) *mux.Router {
 	r := mux.NewRouter()
 
 	r.HandleFunc("/tasks", taskHandler.ListTasks).Methods("GET")
@@ -22,6 +22,10 @@ func NewRouter(taskHandler *TaskHandler) *mux.Router {
 	r.HandleFunc("/workers", taskHandler.GetWorkerPoolStatus).Methods("GET")
 	r.HandleFunc("/workers", taskHandler.UpdateWorkerPool).Methods("PUT")
 	r.HandleFunc("/workers/{action}", taskHandler.AdjustWorkerCount).Methods("POST")
+	r.HandleFunc("/cluster/nodes", clusterHandler.GetClusterNodes).Methods("GET")
+	r.HandleFunc("/cluster/nodes/{id}", clusterHandler.GetNodeInfo).Methods("GET")
+	r.HandleFunc("/cluster/nodes/{id}/tasks", clusterHandler.GetNodeTasks).Methods("GET")
+	r.HandleFunc("/cluster/status", clusterHandler.GetClusterStatus).Methods("GET")
 
 	return r
 }

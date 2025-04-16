@@ -169,3 +169,116 @@ func (fs *FileStorage) Close() error {
 
 	return fs.saveTasks()
 }
+
+var taskLocks = struct {
+	locks map[string]string
+	mu    sync.Mutex
+}{
+	locks: make(map[string]string),
+}
+
+var completedTasks = struct {
+	tasks map[string]bool
+	mu    sync.Mutex
+}{
+	tasks: make(map[string]bool),
+}
+
+func (fs *FileStorage) IsTaskCompleted(taskID string) (bool, error) {
+
+	completedTasks.mu.Lock()
+	completed, exists := completedTasks.tasks[taskID]
+	completedTasks.mu.Unlock()
+
+	if exists {
+		return completed, nil
+	}
+
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	task, exists := fs.tasks[taskID]
+	if !exists {
+		return false, fmt.Errorf("task %s not found", taskID)
+	}
+
+	isCompleted := task.Status == queue.TaskStatusCompleted
+
+	if isCompleted {
+		completedTasks.mu.Lock()
+		completedTasks.tasks[taskID] = true
+		completedTasks.mu.Unlock()
+	}
+
+	return isCompleted, nil
+}
+
+func (fs *FileStorage) MarkTaskCompleted(taskID string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	task, exists := fs.tasks[taskID]
+	if !exists {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	task.Status = queue.TaskStatusCompleted
+	task.CompletedAt = time.Now()
+	fs.tasks[taskID] = task
+
+	completedTasks.mu.Lock()
+	completedTasks.tasks[taskID] = true
+	completedTasks.mu.Unlock()
+
+	return nil
+}
+
+func (fs *FileStorage) AcquireTaskLock(taskID, nodeID string, timeout time.Duration) (bool, error) {
+
+	completed, err := fs.IsTaskCompleted(taskID)
+	if err != nil {
+		return false, err
+	}
+
+	if completed {
+		return false, nil // Görev zaten tamamlanmış, kilitlemeye gerek yok
+	}
+
+	taskLocks.mu.Lock()
+	defer taskLocks.mu.Unlock()
+
+	if currentOwner, exists := taskLocks.locks[taskID]; exists {
+
+		return currentOwner == nodeID, nil
+	}
+
+	taskLocks.locks[taskID] = nodeID
+
+	go func() {
+		time.Sleep(timeout)
+		taskLocks.mu.Lock()
+
+		if owner, exists := taskLocks.locks[taskID]; exists && owner == nodeID {
+			delete(taskLocks.locks, taskID)
+		}
+		taskLocks.mu.Unlock()
+	}()
+
+	return true, nil
+}
+
+func (fs *FileStorage) ReleaseTaskLock(taskID, nodeID string) error {
+	taskLocks.mu.Lock()
+	defer taskLocks.mu.Unlock()
+
+	if currentOwner, exists := taskLocks.locks[taskID]; exists {
+
+		if currentOwner == nodeID {
+			delete(taskLocks.locks, taskID)
+			return nil
+		}
+		return fmt.Errorf("task %s is locked by another node", taskID)
+	}
+
+	return nil // Kilit zaten yoksa hata dönme
+}
