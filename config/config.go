@@ -3,39 +3,72 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"time"
 )
 
 type Config struct {
-	QueueSize   int    `json:"queue_size"`
-	LogLevel    string `json:"log_level"`
-	RetryCount  int    `json:"retry_count"`
-	WorkerCount int    `json:"worker_count"`
-	APIPort     int    `json:"api_port"`
+	QueueSize            int           `json:"queueSize"`
+	LogLevel             string        `json:"logLevel"`
+	RetryCount           int           `json:"retryCount"`
+	WorkerCount          int           `json:"workerCount"`
+	MinWorkers           int           `json:"minWorkers"`
+	MaxWorkers           int           `json:"maxWorkers"`
+	APIPort              int           `json:"apiPort"`
+	SchedulerInterval    time.Duration `json:"schedulerInterval"`
+	DataDir              string        `json:"dataDir"`
+	AutoScalingEnabled   bool          `json:"autoScalingEnabled"`
+	ScaleUpThreshold     float64       `json:"scaleUpThreshold"`
+	ScaleDownThreshold   float64       `json:"scaleDownThreshold"`
+	ScaleCheckInterval   int           `json:"scaleCheckInterval"`
+	DistributionStrategy string        `json:"distributionStrategy"`
 }
 
 func LoadConfig(filePath string) (*Config, error) {
-
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return &Config{
-			QueueSize:   100,
-			LogLevel:    "info",
-			RetryCount:  3,
-			WorkerCount: 5,
-		}, nil
-	}
-
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	decoder := json.NewDecoder(file)
-	config := &Config{}
-	err = decoder.Decode(config)
-	if err != nil {
-		return nil, err
+	config := &Config{
+		QueueSize:            100,
+		LogLevel:             "info",
+		RetryCount:           3,
+		WorkerCount:          5,
+		MinWorkers:           2,
+		MaxWorkers:           10,
+		APIPort:              8080,
+		SchedulerInterval:    1 * time.Second,
+		DataDir:              "./data",
+		AutoScalingEnabled:   true,
+		ScaleUpThreshold:     0.7,
+		ScaleDownThreshold:   0.3,
+		ScaleCheckInterval:   30,
+		DistributionStrategy: "least-loaded",
 	}
 
-	return config, nil
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(config)
+
+	if config.SchedulerInterval <= 0 {
+		config.SchedulerInterval = 1 * time.Second
+	}
+
+	if config.MinWorkers <= 0 {
+		config.MinWorkers = 1
+	}
+
+	if config.MaxWorkers < config.MinWorkers {
+		config.MaxWorkers = config.MinWorkers * 2
+	}
+
+	if config.WorkerCount < config.MinWorkers {
+		config.WorkerCount = config.MinWorkers
+	}
+
+	if config.WorkerCount > config.MaxWorkers {
+		config.WorkerCount = config.MaxWorkers
+	}
+
+	return config, err
 }

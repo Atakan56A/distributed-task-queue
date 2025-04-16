@@ -12,36 +12,71 @@ import (
 	"distributed-task-queue/internal/retry"
 )
 
-type Worker struct {
-	ID          int
-	TaskChannel chan *queue.Task
-	Quit        chan bool
-	Metrics     *metrics.Metrics
-	TaskQueue   *queue.Queue
+type WebhookNotifier interface {
+	NotifyTaskEvent(task interface{}, event string)
 }
 
-func NewWorker(id int, taskChannel chan *queue.Task, metrics *metrics.Metrics, taskQueue *queue.Queue) *Worker {
+type Worker struct {
+	ID              int
+	TaskChannel     chan *queue.Task
+	Quit            chan bool
+	Metrics         *metrics.Metrics
+	TaskQueue       *queue.Queue
+	WebhookNotifier WebhookNotifier
+	WorkerMetrics   *WorkerMetrics
+	Status          WorkerStatus
+	ctx             context.Context
+	cancel          context.CancelFunc
+}
+
+type WorkerStatus string
+
+const (
+	WorkerStatusIdle     WorkerStatus = "idle"
+	WorkerStatusBusy     WorkerStatus = "busy"
+	WorkerStatusStopping WorkerStatus = "stopping"
+	WorkerStatusStopped  WorkerStatus = "stopped"
+)
+
+func NewWorker(id int, taskChannel chan *queue.Task, metrics *metrics.Metrics,
+	taskQueue *queue.Queue, webhookNotifier WebhookNotifier) *Worker {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &Worker{
-		ID:          id,
-		TaskChannel: taskChannel,
-		Quit:        make(chan bool),
-		Metrics:     metrics,
-		TaskQueue:   taskQueue,
+		ID:              id,
+		TaskChannel:     taskChannel,
+		Quit:            make(chan bool),
+		Metrics:         metrics,
+		TaskQueue:       taskQueue,
+		WebhookNotifier: webhookNotifier,
+		WorkerMetrics:   NewWorkerMetrics(),
+		Status:          WorkerStatusIdle,
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 }
 
-func (w *Worker) Start(ctx context.Context) {
+func (w *Worker) Start() {
 	go func() {
 		for {
 			select {
 			case task := <-w.TaskChannel:
+				w.Status = WorkerStatusBusy
+				w.WorkerMetrics.RecordTaskStart()
 				log.Printf("Worker %d processing task: %v\n", w.ID, task.ID)
 				w.processTask(task)
+				w.Status = WorkerStatusIdle
+
 			case <-w.Quit:
+				w.Status = WorkerStatusStopping
 				log.Printf("Worker %d stopping\n", w.ID)
+				w.Status = WorkerStatusStopped
 				return
-			case <-ctx.Done():
+
+			case <-w.ctx.Done():
+				w.Status = WorkerStatusStopping
 				log.Printf("Worker %d context done\n", w.ID)
+				w.Status = WorkerStatusStopped
 				return
 			}
 		}
@@ -116,12 +151,17 @@ func (w *Worker) processTask(task *queue.Task) {
 	}
 
 	duration := time.Since(startTime)
+	w.WorkerMetrics.RecordTaskCompletion(duration, success)
 
 	if success {
 		log.Printf("Worker %d successfully completed task: %v\n", w.ID, task.ID)
 		task.SetCompleted("Task completed successfully")
 		if w.Metrics != nil {
 			w.Metrics.RecordTaskSuccess(duration)
+		}
+
+		if w.WebhookNotifier != nil {
+			w.WebhookNotifier.NotifyTaskEvent(task, "completed")
 		}
 	} else {
 		log.Printf("Worker %d failed to complete task after %d attempts: %v\n", w.ID, task.RetryCount+1, task.ID)
@@ -132,6 +172,14 @@ func (w *Worker) processTask(task *queue.Task) {
 			reason := fmt.Sprintf("Failed after %d attempts. Last error: %s", task.RetryCount, lastError)
 			if w.TaskQueue != nil {
 				w.TaskQueue.MoveToDeadLetterQueue(task.ID, reason)
+			}
+
+			if w.WebhookNotifier != nil {
+				w.WebhookNotifier.NotifyTaskEvent(task, "dead-lettered")
+			}
+		} else {
+			if w.WebhookNotifier != nil {
+				w.WebhookNotifier.NotifyTaskEvent(task, "failed")
 			}
 		}
 
@@ -150,5 +198,15 @@ func processTaskLogic(_ *queue.Task) (bool, string) {
 }
 
 func (w *Worker) Stop() {
+	w.Status = WorkerStatusStopping
+	w.cancel()
 	w.Quit <- true
+}
+
+func (w *Worker) GetUtilization() float64 {
+	return w.WorkerMetrics.GetUtilization()
+}
+
+func (w *Worker) IsIdle() bool {
+	return w.Status == WorkerStatusIdle
 }

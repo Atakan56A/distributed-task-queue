@@ -1,7 +1,4 @@
-﻿# Executable
-taskqueueservice.exe
-
-# Go specific
+﻿# Derlenmiş dosyalar
 *.exe
 *.exe~
 *.dll
@@ -9,11 +6,19 @@ taskqueueservice.exe
 *.dylib
 *.test
 *.out
-go.work
 
-# Log files
+# Go modülleri
+*.sum
+
+# IDE dosyaları
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Veritabanı ve günlük dosyaları
+*.db
 *.log
 
-# OS specific
-.DS_Store
-Thumbs.db
+# Kalıcı veri dizini
+data/tasks.json

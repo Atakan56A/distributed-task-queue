@@ -8,12 +8,12 @@ import (
 	"distributed-task-queue/internal/queue"
 	"distributed-task-queue/internal/scheduler"
 	"distributed-task-queue/internal/storage"
+	"distributed-task-queue/internal/webhook"
 	"distributed-task-queue/internal/worker"
 	"distributed-task-queue/pkg/logger"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -38,7 +38,7 @@ func main() {
 
 	taskQueue := queue.NewQueue()
 
-	dataDir := filepath.Join(".", "data")
+	dataDir := cfg.DataDir
 	fileStorage, err := storage.NewFileStorage(dataDir)
 	if err != nil {
 		log.Fatalf("Failed to initialize storage: %v", err)
@@ -55,12 +55,34 @@ func main() {
 
 	taskChannel := make(chan *queue.Task, cfg.QueueSize)
 
-	workerPool := worker.NewWorkerPool(cfg.WorkerCount, taskChannel, metricsCollector, taskQueue)
+	webhookManager := webhook.NewWebhookManager(log)
 
-	taskScheduler := scheduler.NewScheduler(taskQueue, taskChannel, log)
+	taskQueue.SetWebhookNotifier(webhookManager)
+
+	workerPool := worker.NewDynamicWorkerPool(
+		cfg.WorkerCount,
+		cfg.MinWorkers,
+		cfg.MaxWorkers,
+		taskChannel,
+		metricsCollector,
+		taskQueue,
+		webhookManager,
+		log,
+	)
+
+	taskDistributor := worker.NewTaskDistributor(workerPool, taskChannel)
+
+	workerTaskChannels := make(map[int]chan *queue.Task)
+	for _, w := range workerPool.GetWorkers() { // DOĞRU - GetWorkers() bir Worker slice'ı döndürür
+		workerTaskChannels[w.ID] = make(chan *queue.Task, 10)
+	}
+
+	go taskDistributor.DistributeTasks(workerTaskChannels)
+
+	taskScheduler := scheduler.NewScheduler(taskQueue, taskChannel, log, cfg.SchedulerInterval)
 	go taskScheduler.Start()
 
-	taskHandler := api.NewTaskHandler(taskQueue, log, metricsCollector)
+	taskHandler := api.NewTaskHandler(taskQueue, log, metricsCollector, webhookManager, workerPool, taskDistributor)
 	router := api.NewRouter(taskHandler)
 
 	port := strconv.Itoa(cfg.APIPort)

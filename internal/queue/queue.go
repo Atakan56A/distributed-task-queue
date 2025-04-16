@@ -3,9 +3,14 @@ package queue
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
+
+type WebhookNotifier interface {
+	NotifyTaskEvent(task interface{}, event string)
+}
 
 type Queue struct {
 	tasks           []*Task
@@ -14,6 +19,7 @@ type Queue struct {
 	cond            *sync.Cond
 	storage         Storage
 	deadLetterQueue *DeadLetterQueue
+	webhookNotifier WebhookNotifier
 }
 
 type Storage interface {
@@ -157,23 +163,6 @@ func (q *Queue) GetTaskDetails(id string) (*Task, error) {
 	return nil, errors.New("task not found")
 }
 
-func (q *Queue) Enqueue(task *Task) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	q.tasks = append(q.tasks, task)
-
-	if q.storage != nil {
-		go func(t *Task) {
-			if err := q.storage.SaveTask(t); err != nil {
-				fmt.Printf("Error saving task to storage: %v\n", err)
-			}
-		}(task)
-	}
-
-	q.cond.Signal()
-}
-
 func (q *Queue) Dequeue() *Task {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -181,6 +170,10 @@ func (q *Queue) Dequeue() *Task {
 	for len(q.tasks) == 0 {
 		q.cond.Wait()
 	}
+
+	sort.Slice(q.tasks, func(i, j int) bool {
+		return q.tasks[i].Priority > q.tasks[j].Priority
+	})
 
 	task := q.tasks[0]
 	q.tasks = q.tasks[1:]
@@ -196,6 +189,26 @@ func (q *Queue) Dequeue() *Task {
 	}
 
 	return task
+}
+
+func (q *Queue) Enqueue(task *Task) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if task.Priority < 1 {
+		task.Priority = PriorityNormal
+	}
+
+	q.tasks = append(q.tasks, task)
+	if q.storage != nil {
+		go func(t *Task) {
+			if err := q.storage.SaveTask(t); err != nil {
+				fmt.Printf("Error saving task to storage: %v\n", err)
+			}
+		}(task)
+	}
+
+	q.cond.Signal()
 }
 
 func (q *Queue) IsEmpty() bool {
@@ -367,4 +380,178 @@ func (q *Queue) GetPendingTasks() []*Task {
 	}
 
 	return pendingTasks
+}
+
+func (q *Queue) CancelTask(id string, cancelledBy, reason string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	for i, task := range q.tasks {
+		if task.ID == id {
+
+			task.SetCancelled(cancelledBy, reason)
+
+			q.tasks = append(q.tasks[:i], q.tasks[i+1:]...)
+
+			q.completedTasks[id] = task
+
+			if q.storage != nil {
+				go func(t *Task) {
+					if err := q.storage.SaveTask(t); err != nil {
+						fmt.Printf("Error saving cancelled task to storage: %v\n", err)
+					}
+				}(task)
+			}
+
+			return nil
+		}
+	}
+
+	if task, exists := q.completedTasks[id]; exists {
+
+		if task.Status == TaskStatusProcessing {
+			task.SetCancelled(cancelledBy, reason)
+
+			if q.storage != nil {
+				go func(t *Task) {
+					if err := q.storage.SaveTask(t); err != nil {
+						fmt.Printf("Error saving cancelled task to storage: %v\n", err)
+					}
+				}(task)
+			}
+
+			if q.webhookNotifier != nil {
+				q.webhookNotifier.NotifyTaskEvent(task, "cancelled")
+			}
+
+			return nil
+		} else if task.Status == TaskStatusCompleted ||
+			task.Status == TaskStatusFailed ||
+			task.Status == TaskStatusDeadLettered ||
+			task.Status == TaskStatusCancelled {
+			return fmt.Errorf("cannot cancel task in terminal state: %s", task.Status)
+		}
+	}
+
+	return errors.New("task not found or cannot be cancelled")
+}
+
+func (q *Queue) SearchTasks(filters map[string]interface{}, page, pageSize int) ([]*Task, int, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	allTasks := make([]*Task, 0)
+
+	for _, task := range q.tasks {
+		allTasks = append(allTasks, task)
+	}
+
+	for _, task := range q.completedTasks {
+		allTasks = append(allTasks, task)
+	}
+
+	if q.storage != nil {
+		storageTasks, err := q.storage.GetAllTasks()
+		if err != nil {
+			return nil, 0, fmt.Errorf("error fetching tasks from storage: %w", err)
+		}
+
+		existingTaskIDs := make(map[string]bool)
+		for _, task := range allTasks {
+			existingTaskIDs[task.ID] = true
+		}
+
+		for _, task := range storageTasks {
+			if !existingTaskIDs[task.ID] {
+				allTasks = append(allTasks, task)
+			}
+		}
+	}
+
+	var filteredTasks []*Task
+	for _, task := range allTasks {
+		if matchesFilters(task, filters) {
+			filteredTasks = append(filteredTasks, task)
+		}
+	}
+
+	totalCount := len(filteredTasks)
+
+	sort.Slice(filteredTasks, func(i, j int) bool {
+		return filteredTasks[i].CreatedAt.After(filteredTasks[j].CreatedAt)
+	})
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+
+	startIdx := (page - 1) * pageSize
+	endIdx := startIdx + pageSize
+
+	if startIdx >= len(filteredTasks) {
+		return []*Task{}, totalCount, nil
+	}
+
+	if endIdx > len(filteredTasks) {
+		endIdx = len(filteredTasks)
+	}
+
+	return filteredTasks[startIdx:endIdx], totalCount, nil
+}
+
+func matchesFilters(task *Task, filters map[string]interface{}) bool {
+	for key, value := range filters {
+		switch key {
+		case "status":
+			if status, ok := value.(string); ok && task.Status != TaskStatus(status) {
+				return false
+			}
+
+		case "id":
+			if id, ok := value.(string); ok && task.ID != id {
+				return false
+			}
+
+		case "tag":
+
+			if tag, ok := value.(string); ok {
+				hasTag := false
+				for _, taskTag := range task.Tags {
+					if taskTag == tag {
+						hasTag = true
+						break
+					}
+				}
+				if !hasTag {
+					return false
+				}
+			}
+
+		case "createdAfter":
+			if after, ok := value.(time.Time); ok && !task.CreatedAt.After(after) {
+				return false
+			}
+
+		case "createdBefore":
+			if before, ok := value.(time.Time); ok && !task.CreatedAt.Before(before) {
+				return false
+			}
+
+		case "priority":
+			if priority, ok := value.(TaskPriority); ok && task.Priority != priority {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func (q *Queue) SetWebhookNotifier(notifier WebhookNotifier) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.webhookNotifier = notifier
 }

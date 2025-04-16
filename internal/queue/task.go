@@ -23,6 +23,14 @@ type TaskEvent struct {
 	Error     string
 }
 
+type TaskPriority int
+
+const (
+	PriorityLow    TaskPriority = 0
+	PriorityNormal TaskPriority = 50
+	PriorityHigh   TaskPriority = 100
+)
+
 type Task struct {
 	ID          string
 	Payload     interface{}
@@ -41,6 +49,10 @@ type Task struct {
 	LastError   string
 	History     []TaskEvent
 	Tags        []string
+	Priority    TaskPriority
+	CancelledAt time.Time
+	CancelledBy string
+	Result      interface{}
 }
 
 func NewTask(id string, payload interface{}, parameters map[string]string) *Task {
@@ -121,4 +133,23 @@ func (t *Task) SetProcessing() {
 	t.Status = TaskStatusProcessing
 	t.StartedAt = time.Now()
 	t.AddEvent(TaskStatusProcessing, "Task processing started", "")
+}
+
+func (t *Task) SetCancelled(cancelledBy, reason string) {
+	t.Status = TaskStatusCancelled
+	t.CancelledAt = time.Now()
+	t.CancelledBy = cancelledBy
+	t.AddEvent(TaskStatusCancelled, reason, "")
+}
+
+func (t *Task) IsComplete() bool {
+	return t.Status == TaskStatusCompleted ||
+		t.Status == TaskStatusFailed ||
+		t.Status == TaskStatusDeadLettered ||
+		t.Status == TaskStatusCancelled
+}
+
+func (t *Task) SetPriority(priority TaskPriority) *Task {
+	t.Priority = priority
+	return t
 }
